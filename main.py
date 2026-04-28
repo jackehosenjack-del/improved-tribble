@@ -17,6 +17,11 @@ DONATION_AFFECTS_GAMEPLAY = False
 DONATION_AFFECTS_WIN_CHANCE = False
 PRIZES_HAVE_CASH_VALUE = False
 
+# Anti-abuse guardrails for the free-play loop.
+MAX_EVENT_VALUE = 10000
+MAX_COINS_PER_RUN = 10000
+MAX_ACTION_LENGTH = 40
+
 DATABASE_URL = "sqlite:///demo_loop.db"
 
 engine = create_engine(
@@ -56,6 +61,7 @@ class DemoEvent(SQLModel, table=True):
     event_name: str
     coins_delta: int = 0
     xp_delta: int = 0
+    idempotency_key: Optional[str] = SQLField(default=None, unique=True, index=True)
     created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -71,7 +77,8 @@ class DonationLog(SQLModel, table=True):
 
 class PlayRequest(BaseModel):
     user_id: str = Field(min_length=1, max_length=80)
-    action: str = Field(default="free_spin", max_length=40)
+    action: str = Field(default="free_spin", max_length=MAX_ACTION_LENGTH)
+    idempotency_key: Optional[str] = Field(default=None, min_length=8, max_length=120)
 
 
 class DonationRequest(BaseModel):
@@ -90,7 +97,7 @@ class CashoutRequest(BaseModel):
 
 app = FastAPI(
     title="Safe Demo Loop API",
-    version="1.0.0",
+    version="1.0.1",
     description="Free-play demo backend with virtual coins only. No real-money cashout.",
 )
 
@@ -130,6 +137,30 @@ def deterministic_reward(user_id: str, play_number: int) -> tuple[PlayResult, in
     return PlayResult.no_win, 10, 5
 
 
+def validate_reward_delta(coins_delta: int) -> None:
+    if coins_delta < 0:
+        raise HTTPException(status_code=400, detail="Negative event value not allowed")
+    if coins_delta > MAX_EVENT_VALUE:
+        raise HTTPException(status_code=400, detail="Suspicious event value")
+
+
+def replay_response(event_log: DemoEvent, user: DemoUser) -> dict:
+    return {
+        "duplicate": True,
+        "event_id": event_log.id,
+        "user_id": user.user_id,
+        "coins_added": event_log.coins_delta,
+        "xp_added": event_log.xp_delta,
+        "total_coins": user.coins,
+        "xp": user.xp,
+        "level": user.level,
+        "badge": user.badge,
+        "cashout_enabled": CASHOUT_ENABLED,
+        "real_money_value": COINS_HAVE_CASH_VALUE,
+        "donation_affects_gameplay": DONATION_AFFECTS_GAMEPLAY,
+    }
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     SQLModel.metadata.create_all(engine)
@@ -140,10 +171,15 @@ def root():
     return {
         "name": "Safe Demo Loop API",
         "status": "running",
+        "version": "1.0.1",
         "mode": "FREE_PLAY",
         "cashout_enabled": CASHOUT_ENABLED,
         "real_money_stakes": REAL_MONEY_STAKES,
         "coins_have_cash_value": COINS_HAVE_CASH_VALUE,
+        "limits": {
+            "max_event_value": MAX_EVENT_VALUE,
+            "max_coins_per_run": MAX_COINS_PER_RUN,
+        },
         "endpoints": [
             "GET /health",
             "GET /api/v1/demo/config",
@@ -170,6 +206,8 @@ def demo_config():
         "donation_affects_gameplay": DONATION_AFFECTS_GAMEPLAY,
         "donation_affects_win_chance": DONATION_AFFECTS_WIN_CHANCE,
         "prizes_have_cash_value": PRIZES_HAVE_CASH_VALUE,
+        "max_event_value": MAX_EVENT_VALUE,
+        "max_coins_per_run": MAX_COINS_PER_RUN,
     }
 
 
@@ -177,8 +215,20 @@ def demo_config():
 def demo_play(payload: PlayRequest):
     with Session(engine) as session:
         user = get_or_create_user(session, payload.user_id)
+
+        if payload.idempotency_key:
+            existing = session.exec(
+                select(DemoEvent).where(DemoEvent.idempotency_key == payload.idempotency_key)
+            ).first()
+            if existing:
+                return replay_response(existing, user)
+
         next_play = user.plays + 1
         result, coins_delta, xp_delta = deterministic_reward(user.user_id, next_play)
+        validate_reward_delta(coins_delta)
+
+        if user.coins + coins_delta > MAX_COINS_PER_RUN:
+            raise HTTPException(status_code=400, detail="Run coin limit exceeded")
 
         user.plays = next_play
         user.coins += coins_delta
@@ -186,17 +236,22 @@ def demo_play(payload: PlayRequest):
         user.updated_at = now_utc()
         recalculate_level_and_badge(user)
 
-        session.add(DemoEvent(
+        event_log = DemoEvent(
             user_id=user.user_id,
             event_name=f"demo_{payload.action}",
             coins_delta=coins_delta,
             xp_delta=xp_delta,
-        ))
+            idempotency_key=payload.idempotency_key,
+        )
+        session.add(event_log)
         session.add(user)
         session.commit()
         session.refresh(user)
+        session.refresh(event_log)
 
         return {
+            "duplicate": False,
+            "event_id": event_log.id,
             "user_id": user.user_id,
             "result": result,
             "coins_added": coins_delta,
