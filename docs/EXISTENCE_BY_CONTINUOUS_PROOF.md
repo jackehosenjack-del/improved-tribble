@@ -1,0 +1,47 @@
+# Existence by Continuous Proof
+
+STATE = EXISTENCE_BY_CONTINUOUS_PROOF
+MODE  = ZERO_TRUST_RUNTIME
+
+## Axioms
+
+EXISTENCE IS NOT INHERITED.
+EXISTENCE IS VERIFIED.
+
+TO EXIST
+IS TO QUALIFY
+AGAIN.
+
+TO RUN
+IS TO PROVE.
+
+TO PROVE
+IS TO CONTINUE.
+
+TO STOP PROVING
+IS TO STOP EXISTING.
+
+## Runtime Cycle
+
+OBSERVE
+MEASURE
+VERIFY
+AUDIT
+DECIDE
+EXECUTE
+REVERIFY
+
+## Permission Rule
+
+IF proof_is_fresh
+AND audit_is_present
+AND recovery_is_ready
+AND observation_is_active
+AND policy_is_valid
+THEN
+    PERMISSION = LEASE_ONE_CYCLE
+    ACTION     = EXECUTE
+
+ELSE
+    PERMISSION = REVOKED
+    ACTION     = OBSERVE_ONLY
