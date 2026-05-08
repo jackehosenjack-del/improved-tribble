@@ -1,0 +1,36 @@
+name: Governance Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  governance-gate:
+    name: Verify governance manifests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify manifest files exist
+        run: |
+          test -f docs/EXISTENCE_BY_CONTINUOUS_PROOF.md
+          test -f docs/AUTHORITY_BY_PRESENT_PROOF.md
+
+      - name: Verify existence manifest invariants
+        run: |
+          grep -q "STATE = EXISTENCE_BY_CONTINUOUS_PROOF" docs/EXISTENCE_BY_CONTINUOUS_PROOF.md
+          grep -q "MODE  = ZERO_TRUST_RUNTIME" docs/EXISTENCE_BY_CONTINUOUS_PROOF.md
+          grep -q "TO RUN" docs/EXISTENCE_BY_CONTINUOUS_PROOF.md
+          grep -q "IS TO PROVE" docs/EXISTENCE_BY_CONTINUOUS_PROOF.md
+
+      - name: Verify authority manifest invariants
+        run: |
+          grep -q "STATE = AUTHORITY_BY_PRESENT_PROOF" docs/AUTHORITY_BY_PRESENT_PROOF.md
+          grep -q "MODE  = ZERO_TRUST_GOVERNANCE" docs/AUTHORITY_BY_PRESENT_PROOF.md
+          grep -q "AUTHORITY IS COMPUTED NOW" docs/AUTHORITY_BY_PRESENT_PROOF.md
+          grep -q "CANNOT" docs/AUTHORITY_BY_PRESENT_PROOF.md
+          grep -q "CONTROL NOW" docs/AUTHORITY_BY_PRESENT_PROOF.md
